@@ -18,12 +18,12 @@
  * @brief the different throttle modes for to modify driving behavior
  * 
  */
-typedef enum DriveModes
+typedef enum DriveMode
 {
-  SLOW = 0,
-  ECO = 10,
-  FAST = 20
-} DriveModes;
+    SLOW = 1,
+    ECO = 2,
+    FAST = 3,
+} DriveMode;
 
 
 /**
@@ -32,11 +32,10 @@ typedef enum DriveModes
  */
 typedef enum PrechargeStates
 {
-  PRECHARGE_OFF = 0,
-  PRECHARGE_ON = 1,
-  PRECHARGE_DONE = 2,
-  PRECHARGE_ERROR = 3,
-
+    PRECHARGE_OFF = 0,
+    PRECHARGE_ON = 1,
+    PRECHARGE_DONE = 2,
+    PRECHARGE_ERROR = 3,
 } PrechargeStates;
 
 
@@ -59,7 +58,7 @@ typedef struct TractiveCoreData
         uint16_t commandedTorque;
 
         bool driveDirection;             // true = forward | false = reverse
-        DriveModes driveMode;
+        DriveMode driveMode;
 
         float currentSpeed;
 
@@ -76,7 +75,7 @@ typedef struct TractiveCoreData
         float coolingTempOut;
         float vicoreTemp;
 
-        float lowVoltageReading;
+        float glvReading;
     } sensors;
     
     struct Inputs
@@ -90,17 +89,11 @@ typedef struct TractiveCoreData
 
     struct Outputs
     {
-        bool rtdLEDEnable;
-        bool driveModeLEDEnable;
-        bool bmsFaultLEDEnable;
-        bool imdFaultEnable;
-        bool fansActiveLEDEnable;
-        bool pumpActiveLEDEnable;
+        DriveMode driveModeLED;
 
         bool brakeLightEnable;
 
         bool fansEnable;
-        bool pumpEnable;
 
         bool buzzerEnable;
         int buzzerCounter;

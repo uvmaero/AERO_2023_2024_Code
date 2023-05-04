@@ -75,4 +75,3 @@ esp_pm_config_esp32s3_t power_configuration {
 #define PUMP_ACTIVE_LED_PIN                 13
 
 #define FAN_ENABLE_PIN                      37
-#define PUMP_ENABLE_PIN                     36

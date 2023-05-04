@@ -46,6 +46,8 @@
 #define PEDAL_DEADBAND                  15          // ~5% of PEDAL_MAX
 #define MAX_TORQUE                      225         // MAX TORQUE RINEHART CAN ACCEPT, DO NOT EXCEED 230!!!
 #define MIN_BUS_VOLTAGE                 150         // min bus voltage
+#define COOLING_ENABLE_THRESHOLD        30          // in degrees C 
+#define COOLING_DISABLE_THRESHOLD       25          // in degrees C
 
 // TWAI
 #define NUM_CAN_READS                   25          // the number of messages to read each time the CAN task is called
@@ -115,80 +117,73 @@ Debugger debugger = {
  * @brief the dataframe that describes the entire state of the car
  * 
  */
-CarData carData = {
-  // driving data
-  .drivingData = {
+TractiveCoreData tractiveCoreData = {
+  // tractive data
+  .tractive = {
     .readyToDrive = false,
+    .startStatus = false,
     .enableInverter = false,
+
     .prechargeState = PRECHARGE_OFF,
 
+    .rinehartVoltage = 0.0f,
+    .commandedTorque = 0,
+
+    .driveDirection = false,
+    .driveMode = ECO,
+    
+    .currentSpeed = 0.0f,
+
+    .coastRegen = 0,
+    .brakeRegen = 0,
+  },
+
+  // sensor data
+  .sensors = {
     .imdFault = true,
     .bmsFault = true,
 
-    .commandedTorque = 0,
-    .currentSpeed = 0.0f,
-    .driveDirection = false,
-    .driveMode = ECO, 
-  },
-
-  // Battery Status
-  .batteryStatus = {
-    .batteryChargeState = 0,
-    .busVoltage = 0,
-    .rinehartVoltage = 0,
-    .pack1Temp = 0.0f,
-    .pack2Temp = 0.0f,
-    .packCurrent = 0.0f,
-    .minCellVoltage = 0.0f,
-    .maxCellVoltage = 0.0f,
-  },
-
-  // Sensors
-  .sensors = {
-    .rpmCounterFR = 0,
-    .rpmCounterFL = 0,
-    .rpmCounterBR = 0,
-    .rpmCounterBL = 0,
-    .rpmTimeFR = 0,
-    .rpmTimeFL = 0,
-    .rpmTimeBR = 0,
-    .rpmTimeBL = 0,
-
-    .wheelSpeedFR = 0.0f,
-    .wheelSpeedFL = 0.0f,
-    .wheelSpeedBR = 0.0f,
-    .wheelSpeedBL = 0.0f,
-
-    .wheelHeightFR = 0.0f,
-    .wheelHeightFL = 0.0f,
-    .wheelHeightBR = 0.0f,
-    .wheelHeightBL = 0.0f,
-
-    .steeringWheelAngle = 0,
-
+    .coolingTempIn = 0.0f,
+    .coolingTempOut = 0.0f,
     .vicoreTemp = 0.0f,
-    .pumpTempIn = 0.0f,
-    .pumpTempOut = 0.0f,
+
+    .glvReading = 0.0f,
   },
 
-  // Inputs
+  // inputs
   .inputs = {
     .pedal0 = 0,
     .pedal1 = 0,
-    .brakeFront = 0,
-    .brakeRear = 0,
-    .brakeRegen = 0,
-    .coastRegen = 0,
+
+    .frontBrake = 0,
+    .rearBrake = 0,
   },
 
-  // Outputs
+  // outputs
   .outputs = {
-    .buzzerActive = false,
+    .driveModeLED = ECO,
+
+    .brakeLightEnable = false,
+
+    .fansEnable = false,
+
+    .buzzerEnable = false,
     .buzzerCounter = 0,
-    .brakeLight = false,
-    .fansActive = false,
-    .pumpActive = false,
-  }
+  },
+
+  // orion
+  .orion = {
+    .batteryChargeState = 0,
+
+    .busVoltage = 0,
+
+    .packCurrent = 0.0f,
+
+    .minCellVoltage = 0.0f,
+    .maxCellVoltage = 0.0f,
+    .minCellTemp = 0.0f,
+    .maxCellTemp = 0.0f,
+  },
 };
 
 
@@ -279,7 +274,6 @@ void setup() {
   pinMode(PUMP_ACTIVE_LED_PIN, OUTPUT);
 
   pinMode(FAN_ENABLE_PIN, OUTPUT);
-  pinMode(PUMP_ENABLE_PIN, OUTPUT);
 
   pinMode(BRAKE_LIGHT_PIN, OUTPUT);
 
@@ -428,7 +422,6 @@ void TWAICallback()
  */
 void IORead(void* pvParameters)
 {
-
   // read pedals
   uint16_t tmpPedal1 = analogReadMilliVolts(PEDAL_1_PIN);
   tmpPedal1 = map(tmpPedal1, 290, 1425, PEDAL_MIN, PEDAL_MAX);                // (0.29V - 1.379V) | values found via testing
@@ -438,6 +431,8 @@ void IORead(void* pvParameters)
   tmpPedal0 = map(tmpPedal0, 575, 2810, PEDAL_MIN, PEDAL_MAX);
   tractiveCoreData.inputs.pedal0 = CalculateThrottleResponse(tmpPedal0);
 
+  // calculate commanded torque
+  GetCommandedTorque();
 
   // brake pressure / pedal
   float tmpFrontBrake = analogReadMilliVolts(FRONT_BRAKE_PIN);
@@ -446,14 +441,38 @@ void IORead(void* pvParameters)
   float tmpRearBrake = analogReadMilliVolts(REAR_BRAKE_PIN);
   tractiveCoreData.inputs.rearBrake = map(tmpRearBrake, 265, 855, PEDAL_MIN, PEDAL_MAX);  // (0.26V - 0.855V) | values found via testing
 
+  uint16_t brakeAverage = (tractiveCoreData.inputs.frontBrake + tractiveCoreData.inputs.rearBrake) / 2;
+  if (brakeAverage >= BRAKE_LIGHT_THRESHOLD) {
+    tractiveCoreData.outputs.brakeLightEnable = true;
+  }
+  else {
+    tractiveCoreData.outputs.brakeLightEnable = false;
+  }
+
   // start button 
-  if (digitalRead(START_BUTTON_PIN) == LOW) {
-    tractiveCoreData.tractive.startStatus = true;
+  if (digitalRead(START_BUTTON_PIN) == LOW && tractiveCoreData.tractive.readyToDrive) {
+    tractiveCoreData.outputs.buzzerEnable = true;
   }
 
   // drive mode button
   if (digitalRead(DRIVE_MODE_BUTTON_PIN) == LOW) {
-    // increment drive mode
+    switch (tractiveCoreData.tractive.driveMode) {
+    case SLOW:
+      tractiveCoreData.tractive.driveMode = ECO;
+      break;
+
+    case ECO:
+      tractiveCoreData.tractive.driveMode = FAST;
+      break;
+
+    case FAST:
+      tractiveCoreData.tractive.driveMode = SLOW;
+      break;
+
+    default:
+      tractiveCoreData.tractive.driveMode = ECO;
+      break;
+    }
   }
 
   // faults
@@ -471,7 +490,6 @@ void IORead(void* pvParameters)
     tractiveCoreData.sensors.imdFault = true;
   }
 
-
   // cooling 
   int tmpCoolingIn = analogReadMilliVolts(COOLING_IN_TEMP_PIN);
   tractiveCoreData.sensors.coolingTempIn = map(tmpCoolingIn, 0, 2500, 0, 100);
@@ -479,16 +497,18 @@ void IORead(void* pvParameters)
   int tmpCoolingOut = analogReadMilliVolts(COOLING_OUT_TEMP_PIN);
   tractiveCoreData.sensors.coolingTempOut = map(tmpCoolingOut, 0, 2500, 0, 100);
 
-
-  // calculate commanded torque
-  GetCommandedTorque();
-
-
-  // debugging
-  if (debugger.debugEnabled) {
-    debugger.IO_data = carData;
-    debugger.ioReadTaskCount++;
+  if (tractiveCoreData.sensors.coolingTempIn >= COOLING_ENABLE_THRESHOLD) {
+    tractiveCoreData.outputs.fansEnable = true;
   }
+  if (tractiveCoreData.sensors.coolingTempIn <= COOLING_DISABLE_THRESHOLD) {
+    tractiveCoreData.outputs.fansEnable = false;
+  }
+
+  // // debugging
+  // if (debugger.debugEnabled) {
+  //   debugger.IO_data = tractiveCoreData;
+  //   debugger.ioReadTaskCount++;
+  // }
 
   // end task
   vTaskDelete(NULL);
@@ -502,103 +522,77 @@ void IORead(void* pvParameters)
  */
 void IOWrite(void* pvParameters)
 {
-  // turn off wifi for ADC channel 2 to function
-  esp_wifi_stop();
-
-  // get brake position
-  float tmpBrake = analogReadMilliVolts(BRAKE_PIN);
-  carData.inputs.brakeFront = map(tmpBrake, 265, 855, PEDAL_MIN, PEDAL_MAX);  // (0.26V - 0.855V) | values found via testing
-
-  // read pedal potentiometer 1
-  uint16_t tmpPedal1 = analogReadMilliVolts(PEDAL_1_PIN);
-  tmpPedal1 = map(tmpPedal1, 290, 1425, PEDAL_MIN, PEDAL_MAX);                // (0.29V - 1.379V) | values found via testing
-  carData.inputs.pedal1 = CalculateThrottleResponse(tmpPedal1);
-
-  // wcb connection LED would also be in here
-
-  // turn wifi back on to re-enable esp-now connection to wheel board
-  esp_wifi_start();
-
-  // get pedal positions
-  uint16_t tmpPedal0 = analogReadMilliVolts(PEDAL_0_PIN);                     //  (0.59V - 2.75V) | values found via testing
-  tmpPedal0 = map(tmpPedal0, 575, 2810, PEDAL_MIN, PEDAL_MAX);                // remap throttle response to 0 - 255 range
-  carData.inputs.pedal0 = CalculateThrottleResponse(tmpPedal0);
-
-  // brake light logic 
-  if (carData.inputs.brakeFront >= BRAKE_LIGHT_THRESHOLD) {
-    carData.outputs.brakeLight = true;      // turn it on 
+  // brake light 
+  if (tractiveCoreData.outputs.brakeLightEnable) {
+    digitalWrite(BRAKE_LIGHT_PIN, HIGH);
   }
-
   else {
-    carData.outputs.brakeLight = false;     // turn it off
+    digitalWrite(BRAKE_LIGHT_PIN, LOW);
   }
 
-  // update wheel ride height values
-  carData.sensors.wheelHeightFR = analogRead(WHEEL_HEIGHT_FR_SENSOR);
-  carData.sensors.wheelHeightFL = analogRead(WHEEL_HEIGHT_FL_SENSOR);
+  // cooling
+  if (tractiveCoreData.outputs.fansEnable) {
+    digitalWrite(FAN_ENABLE_PIN, HIGH);
+  }
+  else {
+    digitalWrite(FAN_ENABLE_PIN, LOW);
+  }
 
-  // update steering wheel position
-  carData.sensors.steeringWheelAngle = analogRead(STEERING_WHEEL_POT);
-
-  // buzzer logic
-  if (carData.outputs.buzzerActive)
-  {
+  // buzzer
+  if (tractiveCoreData.outputs.buzzerEnable) {
     digitalWrite(BUZZER_PIN, HIGH);
-    carData.outputs.buzzerCounter++;
+    tractiveCoreData.outputs.buzzerCounter++;
 
-    if (carData.outputs.buzzerCounter >= (2 * (SENSOR_POLL_INTERVAL / 10000)))    // convert to activations per second and multiply by 2
+    if (tractiveCoreData.outputs.buzzerCounter >= (2 * (IO_UPDATE_INTERVAL / 10000)))    // convert to activations per second and multiply by 2
     {
       // update buzzer state and turn off the buzzer
-      carData.outputs.buzzerActive = false;
-      carData.outputs.buzzerCounter = 0;                        // reset buzzer count
+      tractiveCoreData.outputs.buzzerEnable = false;
+      tractiveCoreData.outputs.buzzerCounter = 0;                        // reset buzzer count
       digitalWrite(BUZZER_PIN, LOW);
 
-      carData.drivingData.enableInverter = true;                // enable the inverter so that we can tell rinehart to turn inverter on
+      tractiveCoreData.tractive.enableInverter = true;                // enable the inverter so that we can tell rinehart to turn inverter on
     }
   }
 
-  // ready to drive button
-  if (digitalRead(RTD_BUTTON_PIN) == LOW) {
-    if (carData.drivingData.readyToDrive) {
-      // turn on buzzer to indicate TSV is live
-      carData.outputs.buzzerActive = true;
-    }
+  // fault leds
+  if (tractiveCoreData.sensors.bmsFault) {
+    digitalWrite(BMS_FAULT_LED_PIN, HIGH);
+  }
+  else {
+    digitalWrite(BMS_FAULT_LED_PIN, LOW);
   }
 
-  // Ready to Drive LED
-  if (carData.drivingData.readyToDrive) {
+  if (tractiveCoreData.sensors.imdFault) {
+    digitalWrite(IMD_FAULT_LED_PIN, HIGH);
+  }
+  else {
+    digitalWrite(IMD_FAULT_LED_PIN, LOW);
+  }
+
+  // drive mode led
+  // implement this
+
+  // cooling led
+  if (tractiveCoreData.outputs.fansEnable) {
+    digitalWrite(FANS_ACTIVE_LED_PIN, HIGH);
+  }
+  else {
+    digitalWrite(FANS_ACTIVE_LED_PIN, LOW);
+  }
+
+  // ready to drive LED
+  if (tractiveCoreData.tractive.readyToDrive) {
     digitalWrite(RTD_LED_PIN, HIGH);
   }
   else {
     digitalWrite(RTD_LED_PIN, LOW);
   }
 
-  // BMS fault LED
-  if (!carData.drivingData.bmsFault) {
-    digitalWrite(BMS_LED_PIN, LOW);
-  }
-  else {
-    digitalWrite(BMS_LED_PIN, HIGH);
-  }
-
-  // IMD fault LED
-  if (!carData.drivingData.imdFault) {
-    digitalWrite(IMD_LED_PIN, LOW);
-  }
-  else {
-    digitalWrite(IMD_LED_PIN, HIGH);
-  }
-
-
-  // calculate commanded torque
-  GetCommandedTorque();
-
-
-  // debugging
-  if (debugger.debugEnabled) {
-    debugger.IO_data = carData;
-    debugger.ioWriteTaskCount++;
-  }
+  // // debugging
+  // if (debugger.debugEnabled) {
+  //   debugger.IO_data = carData;
+  //   debugger.ioWriteTaskCount++;
+  // }
 
   // end task
   vTaskDelete(NULL);

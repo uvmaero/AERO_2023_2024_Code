@@ -40,7 +40,7 @@ typedef enum PrechargeStates
 
 
 /**
- * @brief the entire current state of the car
+ * @brief tractive state of the core
  * 
  */
 typedef struct TractiveCoreData
@@ -114,7 +114,6 @@ typedef struct TractiveCoreData
     } orion;
 
 } TractiveCoreData;
-
 
 
 /**

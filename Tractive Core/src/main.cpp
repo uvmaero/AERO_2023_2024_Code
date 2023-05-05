@@ -579,7 +579,7 @@ void IOWriteTask(void* pvParameters)
       tractiveCoreData.outputs.buzzerCounter = 0;                        // reset buzzer count
       digitalWrite(BUZZER_PIN, LOW);
 
-      tractiveCoreData.tractive.enableInverter = true;                // enable the inverter so that we can tell rinehart to turn inverter on
+      tractiveCoreData.tractive.enableInverter = true;                   // enable the inverter
     }
   }
 
@@ -599,7 +599,7 @@ void IOWriteTask(void* pvParameters)
   }
 
   // drive mode led
-  // implement this
+  // implement this doing some rgb led stuff
 
   // cooling led
   if (tractiveCoreData.outputs.fansEnable) {
@@ -640,9 +640,7 @@ void TWAIReadTask(void* pvParameters)
   uint8_t tmp1, tmp2;
   int id;
 
-  // --- receive messages --- //
-
-  // if rx queue is full clear it (this is bad, implement can message filtering)
+  // if rx queue is full clear it (this is bad, implement twai message filtering)
   uint32_t alerts;
   twai_read_alerts(&alerts, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
   if (alerts & TWAI_ALERT_RX_QUEUE_FULL) {
@@ -797,7 +795,6 @@ void TWAIWriteTask(void* pvParameters)
 
   // queue rinehart message for transmission
   prechargeMessageResult = twai_transmit(&prechargeMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
-
 
   // debugging
   if (debugger.debugEnabled) {

@@ -186,7 +186,7 @@ typedef struct TelemetryCoreData
         uint8_t month;
         uint8_t day;
     } gps;
-};
+} TelemetryCoreData;
 
 
 /**

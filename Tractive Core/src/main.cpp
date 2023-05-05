@@ -51,14 +51,12 @@
 #define PRECHARGE_FLOOR                 0.8         // precentage of bus voltage rinehart should be at
 
 // TWAI
-#define NUM_CAN_READS                   25          // the number of messages to read each time the CAN task is called
-#define FCB_CONTROL_ADDR                0x00A       // critical data for FCB
-#define FCB_DATA_ADDR                   0x00B       // sensor information for FCB
-#define RCB_CONTROL_ADDR                0x00C       // critical data for RCB
-#define RCB_DATA_ADDR                   0x00D       // sensor information for RCB 
-#define RINE_CONTROL_ADDR               0x0C0       // motor command address 
-#define RINE_MOTOR_INFO_ADDR            0x0A5       // get rinehart motor infromation 
-#define RINE_VOLT_INFO_ADDR             0x0A7       // get rinehart voltage information
+#define NUM_TWAI_READS                   25          // the number of messages to read each time the CAN task is called
+#define RINE_MOTOR_INFO_ADDR            0x0A5       // get motor information from Rinehart 
+#define RINE_VOLT_INFO_ADDR             0x0A7       // get rinehart electrical information
+#define RINE_BUS_INFO_ADDR              0x0AA       // get rinehart relay information 
+#define RINE_MOTOR_CONTROL_ADDR         0x0C0       // motor command address 
+#define RINE_BUS_CONTROL_ADDR           0x0C1       // control rinehart relay states
 #define BMS_GEN_DATA_ADDR               0x6B0       // important BMS data
 #define BMS_CELL_DATA_ADDR              0x6B2       // cell data
 
@@ -652,7 +650,7 @@ void TWAIReadTask(void* pvParameters)
   }
 
   // check for new messages in the CAN buffer
-  for (int i = 0; i < NUM_CAN_READS; ++i) {
+  for (int i = 0; i < NUM_TWAI_READS; ++i) {
     if (twai_receive(&incomingMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY)) == ESP_OK) { // if there are messages to be read
       id = incomingMessage.identifier;
       
@@ -709,11 +707,11 @@ void TWAIReadTask(void* pvParameters)
 void TWAIWriteTask(void* pvParameters)
 {
   // inits
-  bool sentStatus = false;  
+  bool sentStatus = false;
 
   // tractive system control message
   twai_message_t rinehartMessage;
-  rinehartMessage.identifier = RINE_CONTROL_ADDR;
+  rinehartMessage.identifier = RINE_MOTOR_CONTROL_ADDR;
   rinehartMessage.flags = TWAI_MSG_FLAG_NONE;
   rinehartMessage.data_length_code = 8;
 
@@ -729,6 +727,76 @@ void TWAIWriteTask(void* pvParameters)
 
   // queue message for transmission
   esp_err_t rineCtrlResult = twai_transmit(&rinehartMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
+
+
+  // --- precharge messages --- // 
+  twai_message_t prechargeMessage;
+  prechargeMessage.identifier = RINE_BUS_CONTROL_ADDR;
+  prechargeMessage.flags = TWAI_MSG_FLAG_NONE;
+  prechargeMessage.data_length_code = 8;
+
+  esp_err_t prechargeMessageResult;
+
+  // build rinehart message based on precharge state
+  switch (tractiveCoreData.tractive.prechargeState) {
+    case PRECHARGE_OFF:
+      // message is sent to rinehart to turn everything off
+      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeMessage.data[3] = 0x00;          // N/A
+      prechargeMessage.data[4] = 0x00;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeMessage.data[6] = 0x00;          // N/A
+      prechargeMessage.data[7] = 0x00;          // N/A
+    break;
+
+    // do precharge
+    case PRECHARGE_ON:
+      // message is sent to rinehart to turn on precharge relay
+      // precharge relay is on relay 1 in Rinehart
+      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeMessage.data[3] = 0x00;          // N/A
+      prechargeMessage.data[4] = 0x01;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeMessage.data[6] = 0x00;          // N/A
+      prechargeMessage.data[7] = 0x00;          // N/A
+    break;
+
+
+    // precharge complete!
+    case PRECHARGE_DONE:
+      // message is sent to rinehart to turn everything on
+      // Keep precharge relay on and turn on main contactor
+      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeMessage.data[3] = 0x00;          // N/A
+      prechargeMessage.data[4] = 0x03;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeMessage.data[6] = 0x00;          // N/A
+      prechargeMessage.data[7] = 0x00;          // N/A
+    break;
+
+
+    // error state
+    case PRECHARGE_ERROR:
+      // message is sent to rinehart to turn everything off
+      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeMessage.data[3] = 0x00;          // N/A
+      prechargeMessage.data[4] = 0x00;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeMessage.data[6] = 0x00;          // N/A
+      prechargeMessage.data[7] = 0x00;          // N/A
+    break;
+  }
+
+  // queue rinehart message for transmission
+  prechargeMessageResult = twai_transmit(&prechargeMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
 
 
   // debugging

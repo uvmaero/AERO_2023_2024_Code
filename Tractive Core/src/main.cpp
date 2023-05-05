@@ -48,6 +48,7 @@
 #define MIN_BUS_VOLTAGE                 150         // min bus voltage
 #define COOLING_ENABLE_THRESHOLD        30          // in degrees C 
 #define COOLING_DISABLE_THRESHOLD       25          // in degrees C
+#define PRECHARGE_FLOOR                 0.8         // precentage of bus voltage rinehart should be at
 
 // TWAI
 #define NUM_CAN_READS                   25          // the number of messages to read each time the CAN task is called
@@ -64,6 +65,7 @@
 // tasks & timers
 #define IO_UPDATE_INTERVAL              50000       // 0.05 seconds in microseconds
 #define TWAI_UPDATE_INTERVAL            50000       // 0.05 seconds in microseconds
+#define PRECHARGE_UPDATE_INTERVAL       200000      // 0.2 seconds in microseconds
 #define TASK_STACK_SIZE                 4096        // in bytes
 #define TWAI_BLOCK_DELAY                100         // time to block to complete function call in FreeRTOS ticks (milliseconds)
 
@@ -190,6 +192,7 @@ TractiveCoreData tractiveCoreData = {
 // Hardware Timers
 hw_timer_t *timer1 = NULL;
 hw_timer_t *timer2 = NULL;
+hw_timer_t *timer3 = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 
@@ -209,12 +212,14 @@ static const twai_filter_config_t can_filter_config = TWAI_FILTER_CONFIG_ACCEPT_
 // callbacks
 void IOUpdateCallback();
 void TWAIUpdateCallback();
+void PrechargeCallback();
 
 // tasks
 void IOReadTask(void* pvParameters);
 void IOWriteTask(void* pvParameters);
 void TWAIReadTask(void* pvParameters);
 void TWAIWriteTask(void* pvParameters);
+void PrechargeTask(void* pvParameters);
 
 // helpers
 void GetCommandedTorque();
@@ -248,8 +253,6 @@ void setup() {
     bool twaiActive = false;
   };
   setup setup;
-
-
   // -------------------------- initialize GPIO ------------------------------ //
   analogReadResolution(12);
   
@@ -285,7 +288,6 @@ void setup() {
 
 
   // --------------------- initialize CAN Controller -------------------------- //
-
   // install CAN driver
   if(twai_driver_install(&can_general_config, &can_timing_config, &can_filter_config) == ESP_OK) {
     Serial.printf("TWAI DRIVER INSTALL [ SUCCESS ]\n");
@@ -306,8 +308,6 @@ void setup() {
   else {
     Serial.printf("TWAI DRIVER INSTALL [ FAILED ]\n");
   }
-
-
   // --------------------------------------------------------------------------- //
 
 
@@ -322,19 +322,27 @@ void setup() {
   timerAttachInterrupt(timer2, &TWAIUpdateCallback, true);
   timerAlarmWrite(timer2, TWAI_UPDATE_INTERVAL, true);
 
+  // timer 3 - precharge 
+  timer3 = timerBegin(2, 80, true);
+  timerAttachInterrupt(timer2, &PrechargeCallback, true);
+  timerAlarmWrite(timer2, PRECHARGE_UPDATE_INTERVAL, true);
+
   // start timers
-  if (setup.ioActive)
-    timerAlarmEnable(timer1);
-  if (setup.twaiActive)
-    timerAlarmEnable(timer2);
-  
+  if (setup.ioActive) {
+    timerAlarmEnable(timer1);   // io
+    timerAlarmEnable(timer3);   // precharge
+  }
+  if (setup.twaiActive) {
+    timerAlarmEnable(timer2);   // twai
+  }
   // ----------------------------------------------------------------------------------------- //
 
 
   // ------------------------------- Scheduler & Task Status --------------------------------- //
   Serial.printf("I/O UPDATE STATUS: %s\n", timerAlarmEnabled(timer1) ? "RUNNING" : "DISABLED");
   Serial.printf("TWAI UPDATE STATUS: %s\n", timerAlarmEnabled(timer2) ? "RUNNING" : "DISABLED");
-  
+  Serial.printf("PRECHARGE UPDATE STATUS: %s\n", timerAlarmEnabled(timer3) ? "RUNNING" : "DISABLED");
+
   // scheduler status
   if (xTaskGetSchedulerState() == 2) {
     Serial.printf("\nScheduler Status: RUNNING\n");
@@ -369,12 +377,15 @@ void IOUpdateCallback()
 {
   portENTER_CRITICAL_ISR(&timerMux);
 
+  // inits 
   static uint8_t ucParameterToPassRead;
   TaskHandle_t xHandleRead = NULL;
-  xTaskCreate(IOReadTask, "Read-IO", TASK_STACK_SIZE, &ucParameterToPassRead, tskIDLE_PRIORITY, &xHandleRead);
 
   static uint8_t ucParameterToPassWrite;
   TaskHandle_t xHandleWrite = NULL;
+
+  // queue tasks 
+  xTaskCreate(IOReadTask, "Read-IO", TASK_STACK_SIZE, &ucParameterToPassRead, tskIDLE_PRIORITY, &xHandleRead);
   xTaskCreate(IOWriteTask, "Write-IO", TASK_STACK_SIZE, &ucParameterToPassWrite, tskIDLE_PRIORITY, &xHandleWrite);
   
   portEXIT_CRITICAL_ISR(&timerMux);
@@ -388,18 +399,19 @@ void IOUpdateCallback()
  * 
  * @param args arguments to be passed to the task
  */
-void TWAICallback() 
+void TWAIUpdateCallback() 
 {
   portENTER_CRITICAL_ISR(&timerMux);
 
-  // Read TWAI
+  // inits
   static uint8_t ucParameterToPassRead;
   TaskHandle_t xHandleRead = NULL;
-  xTaskCreate(TWAIReadTask, "Read-TWAI", TASK_STACK_SIZE, &ucParameterToPassRead, tskIDLE_PRIORITY, &xHandleRead);
-  
-  // Write TWAI
+
   static uint8_t ucParameterToPassWrite;
   TaskHandle_t xHandleWrite = NULL;
+
+  // queue tasks 
+  xTaskCreate(TWAIReadTask, "Read-TWAI", TASK_STACK_SIZE, &ucParameterToPassRead, tskIDLE_PRIORITY, &xHandleRead);
   xTaskCreate(TWAIWriteTask, "Write-TWAI", TASK_STACK_SIZE, &ucParameterToPassWrite, tskIDLE_PRIORITY, &xHandleWrite);
 
   portEXIT_CRITICAL_ISR(&timerMux);
@@ -407,6 +419,25 @@ void TWAICallback()
   return;
 }
 
+
+/**
+ * @brief 
+ * 
+ */
+void PrechargeCallback() {
+  portENTER_CRITICAL_ISR(&timerMux);
+  
+  // inits
+  static uint8_t ucParameterToPass;
+  TaskHandle_t xHandle = NULL;
+
+  // queue task
+  xTaskCreate(PrechargeTask, "Precharge-Update", TASK_STACK_SIZE, &ucParameterToPass, tskIDLE_PRIORITY, &xHandle);
+  
+  portEXIT_CRITICAL_ISR(&timerMux);
+
+  return;
+}
 
 /*
 ===============================================================================================
@@ -420,7 +451,7 @@ void TWAICallback()
  * 
  * @param pvParameters parameters passed to task
  */
-void IORead(void* pvParameters)
+void IOReadTask(void* pvParameters)
 {
   // read pedals
   uint16_t tmpPedal1 = analogReadMilliVolts(PEDAL_1_PIN);
@@ -520,7 +551,7 @@ void IORead(void* pvParameters)
  * 
  * @param pvParameters parameters passed to task
  */
-void IOWrite(void* pvParameters)
+void IOWriteTask(void* pvParameters)
 {
   // brake light 
   if (tractiveCoreData.outputs.brakeLightEnable) {
@@ -634,20 +665,7 @@ void TWAIReadTask(void* pvParameters)
           tmp2 = incomingMessage.data[1];
 
           // combine the first two bytes and assign that to the rinehart voltage
-          carData.batteryStatus.rinehartVoltage = (tmp2 << 8) | tmp1;   // little endian combination: value = (byte2 << 8) | byte1;
-        break;
-
-        case FCB_CONTROL_ADDR:
-          carData.drivingData.readyToDrive =  incomingMessage.data[0];
-          carData.drivingData.imdFault = incomingMessage.data[1];
-          carData.drivingData.bmsFault = incomingMessage.data[2];
-        break;
-
-        case FCB_DATA_ADDR:
-          carData.sensors.wheelSpeedBR = incomingMessage.data[0];
-          carData.sensors.wheelSpeedBL = incomingMessage.data[1];
-          carData.sensors.wheelHeightBR = incomingMessage.data[2];
-          carData.sensors.wheelHeightBL = incomingMessage.data[3];
+          tractiveCoreData.tractive.rinehartVoltage = (tmp2 << 8) | tmp1;   // little endian combination: value = (byte2 << 8) | byte1;
         break;
 
         // BMS: general pack data
@@ -655,21 +673,21 @@ void TWAIReadTask(void* pvParameters)
           // pack current
           tmp1 = incomingMessage.data[0]; 
           tmp2 = incomingMessage.data[1];
-          carData.batteryStatus.packCurrent = (tmp1 << 8) | tmp2;   // big endian combination: value = (byte1 << 8) | byte2;
+          tractiveCoreData.orion.packCurrent = (tmp1 << 8) | tmp2;   // big endian combination: value = (byte1 << 8) | byte2;
 
           // pack voltage
           tmp1 = incomingMessage.data[2];
           tmp2 = incomingMessage.data[3];
-          carData.batteryStatus.busVoltage = ((tmp1 << 8) | tmp2) / 10;    // big endian combination: value = (byte1 << 8) | byte2;
+          tractiveCoreData.orion.busVoltage = ((tmp1 << 8) | tmp2) / 10;    // big endian combination: value = (byte1 << 8) | byte2;
 
           // state of charge
-          carData.batteryStatus.batteryChargeState = incomingMessage.data[4];
+          tractiveCoreData.orion.batteryChargeState = incomingMessage.data[4];
         break;
 
         // BMS: cell data
         case BMS_CELL_DATA_ADDR:
-          carData.batteryStatus.minCellVoltage = incomingMessage.data[0];
-          carData.batteryStatus.maxCellVoltage = incomingMessage.data[1];
+          tractiveCoreData.orion.minCellVoltage = incomingMessage.data[0];
+          tractiveCoreData.orion.maxCellVoltage = incomingMessage.data[1];
         break;
 
         default:
@@ -693,59 +711,123 @@ void TWAIWriteTask(void* pvParameters)
   // inits
   bool sentStatus = false;  
 
-  twai_message_t rineOutgoingMessage;
-  rineOutgoingMessage.identifier = RINE_CONTROL_ADDR;
-  rineOutgoingMessage.flags = TWAI_MSG_FLAG_NONE;
-  rineOutgoingMessage.data_length_code = 8;
+  // tractive system control message
+  twai_message_t rinehartMessage;
+  rinehartMessage.identifier = RINE_CONTROL_ADDR;
+  rinehartMessage.flags = TWAI_MSG_FLAG_NONE;
+  rinehartMessage.data_length_code = 8;
 
   // build message
-  rineOutgoingMessage.data[0] = carData.drivingData.commandedTorque & 0xFF;       // commanded torque is sent across two bytes
-  rineOutgoingMessage.data[1] = carData.drivingData.commandedTorque >> 8;
-  rineOutgoingMessage.data[2] = 0x00;                                             // speed command NOT USING
-  rineOutgoingMessage.data[3] = 0x00;                                             // speed command NOT USING
-  rineOutgoingMessage.data[4] = (uint8_t)(carData.drivingData.driveDirection);    // 1: forward | 0: reverse (we run in reverse!)
-  rineOutgoingMessage.data[5] = (uint8_t)(carData.drivingData.enableInverter);    // enable inverter command
-  rineOutgoingMessage.data[6] = (MAX_TORQUE * 10) & 0xFF;                         // this is the max torque value that rinehart will push
-  rineOutgoingMessage.data[7] = (MAX_TORQUE * 10) >> 8;                           // rinehart expects 10x value spread across 2 bytes
+  rinehartMessage.data[0] = tractiveCoreData.tractive.commandedTorque & 0xFF;     // commanded torque is sent across two bytes
+  rinehartMessage.data[1] = tractiveCoreData.tractive.commandedTorque >> 8;
+  rinehartMessage.data[2] = 0x00;                                                 // speed command NOT USING
+  rinehartMessage.data[3] = 0x00;                                                 // speed command NOT USING
+  rinehartMessage.data[4] = (uint8_t)(tractiveCoreData.tractive.driveDirection);  // 1: forward | 0: reverse (we run in reverse!)
+  rinehartMessage.data[5] = (uint8_t)(tractiveCoreData.tractive.enableInverter);  // enable inverter command
+  rinehartMessage.data[6] = (MAX_TORQUE * 10) & 0xFF;                             // this is the max torque value that rinehart will push
+  rinehartMessage.data[7] = (MAX_TORQUE * 10) >> 8;                               // rinehart expects 10x value spread across 2 bytes
 
   // queue message for transmission
-  esp_err_t rineCtrlResult = twai_transmit(&rineOutgoingMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
+  esp_err_t rineCtrlResult = twai_transmit(&rinehartMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
 
-
-  // setup RCB message
-  twai_message_t rcbOutgoingMessage;
-  rcbOutgoingMessage.identifier = RCB_CONTROL_ADDR;
-  rcbOutgoingMessage.flags = TWAI_MSG_FLAG_NONE;
-  rcbOutgoingMessage.data_length_code = 8;
-
-  // build message for RCB - control
-  rcbOutgoingMessage.data[0] = (uint8_t)carData.outputs.brakeLight;
-  rcbOutgoingMessage.data[1] = 0x00;
-  rcbOutgoingMessage.data[2] = 0x02;
-  rcbOutgoingMessage.data[3] = 0x03;
-  rcbOutgoingMessage.data[4] = 0x04;
-  rcbOutgoingMessage.data[5] = 0x05;
-  rcbOutgoingMessage.data[6] = 0x06;
-  rcbOutgoingMessage.data[7] = 0x07;
-
-  // queue message for transmission
-  esp_err_t rcbCtrlResult = twai_transmit(&rcbOutgoingMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
 
   // debugging
   if (debugger.debugEnabled) {
     debugger.TWAI_rineCtrlResult = rineCtrlResult;
-    debugger.TWAI_rcbCtrlResult = rcbCtrlResult;
 
     for (int i = 0; i < 8; ++i) {
-      debugger.TWAI_rineCtrlOutgoingMessage[i] = rineOutgoingMessage.data[i];
-    }
-
-    for (int i = 0; i < 8; ++i) {
-      debugger.TWAI_rcbCtrlOutgoingMessage[i] = rcbOutgoingMessage.data[i];
+      debugger.TWAI_rineCtrlOutgoingMessage[i] = rinehartMessage.data[i];
     }
 
     debugger.twaiWriteTaskCount++;
   }
+
+  // end task
+  vTaskDelete(NULL);
+}
+
+
+/**
+ * @brief run precharge
+ * 
+ * @param pvParameters 
+ */
+void PrechargeTask(void* pvParameters) {
+  // inits
+  twai_message_t outgoingMessage;
+  int result;
+
+  // precharge state machine
+  switch (tractiveCoreData.tractive.prechargeState) {
+
+    // prepare for and start precharge
+    case PRECHARGE_OFF:
+
+      // set ready to drive state
+      tractiveCoreData.tractive.readyToDrive = false;
+
+      if (tractiveCoreData.sensors.imdFault == false && tractiveCoreData.sensors.bmsFault == false) {
+        tractiveCoreData.tractive.prechargeState = PRECHARGE_ON;
+      }
+
+    break;
+
+    // do precharge
+    case PRECHARGE_ON:
+
+      // set ready to drive state
+      tractiveCoreData.tractive.readyToDrive = false;
+
+      // ensure voltages are above correct values
+      if ((tractiveCoreData.tractive.rinehartVoltage >= (tractiveCoreData.orion.busVoltage * PRECHARGE_FLOOR)) &&
+      (tractiveCoreData.orion.busVoltage > MIN_BUS_VOLTAGE)) {
+        tractiveCoreData.tractive.prechargeState = PRECHARGE_DONE;
+      }
+
+    break;
+
+
+    // precharge complete!
+    case PRECHARGE_DONE:
+
+      // set ready to drive state
+      tractiveCoreData.tractive.readyToDrive = true;
+
+      // if rinehart voltage drops below battery, something's wrong, 
+      if (tractiveCoreData.tractive.rinehartVoltage < MIN_BUS_VOLTAGE) {
+        tractiveCoreData.tractive.prechargeState = PRECHARGE_ERROR;
+      }
+
+    break;
+
+
+    // error state
+    case PRECHARGE_ERROR:
+
+      // ensure car cannot drive
+      tractiveCoreData.tractive.readyToDrive = false;
+      tractiveCoreData.tractive.commandedTorque = 0;
+
+      // reset precharge cycle
+      tractiveCoreData.tractive.prechargeState = PRECHARGE_OFF;
+
+    break;
+    
+
+    // handle undefined behavior
+    default:
+
+      // if we've entered an undefined state, go to error mode
+      tractiveCoreData.tractive.prechargeState = PRECHARGE_ERROR;
+
+    break;
+  }
+
+  // // debugging 
+  // if (debugger.debugEnabled) {
+  //   debugger.prechargeState = tractiveCoreData.tractive.prechargeState;
+  //   debugger.prechargeTaskCount++;
+  // }
 
   // end task
   vTaskDelete(NULL);
@@ -781,59 +863,59 @@ void loop()
 void GetCommandedTorque()
 {
   // get the pedal average
-  int pedalAverage = (carData.inputs.pedal0 + carData.inputs.pedal1) / 2;
+  int pedalAverage = (tractiveCoreData.inputs.pedal0 + tractiveCoreData.inputs.pedal1) / 2;
 
   // drive mode logic (values are 10x because that is the format for Rinehart)
-  switch (carData.drivingData.driveMode)
+  switch (tractiveCoreData.tractive.driveMode)
   {
     case SLOW:  // runs at 50% power
-      carData.drivingData.commandedTorque = map(pedalAverage, PEDAL_MIN, PEDAL_MAX, 0, (MAX_TORQUE * 10) * 0.50);
+      tractiveCoreData.tractive.commandedTorque = map(pedalAverage, PEDAL_MIN, PEDAL_MAX, 0, (MAX_TORQUE * 10) * 0.50);
     break;
 
     case ECO:   // runs at 75% power
-      carData.drivingData.commandedTorque = map(pedalAverage, PEDAL_MIN, PEDAL_MAX, 0, (MAX_TORQUE * 10) * 0.75);
+      tractiveCoreData.tractive.commandedTorque = map(pedalAverage, PEDAL_MIN, PEDAL_MAX, 0, (MAX_TORQUE * 10) * 0.75);
     break;
 
     case FAST:  // runs at 100% power
-      carData.drivingData.commandedTorque = map(pedalAverage, PEDAL_MIN, PEDAL_MAX, 0, (MAX_TORQUE * 10));
+      tractiveCoreData.tractive.commandedTorque = map(pedalAverage, PEDAL_MIN, PEDAL_MAX, 0, (MAX_TORQUE * 10));
     break;
     
     // error state, set the mode to ECO
     default:
       // set the state to ECO for next time
-      carData.drivingData.driveMode = ECO;
+      tractiveCoreData.tractive.driveMode = ECO;
 
       // we don't want to send a torque command if we were in an undefined state
-      carData.drivingData.commandedTorque = 0;
+      tractiveCoreData.tractive.commandedTorque = 0;
     break;
   }
 
   // --- safety checks --- //
 
   // rinehart voltage check
-  if (carData.batteryStatus.rinehartVoltage < MIN_BUS_VOLTAGE) {
-    carData.drivingData.enableInverter = false;
+  if (tractiveCoreData.tractive.rinehartVoltage < MIN_BUS_VOLTAGE) {
+    tractiveCoreData.tractive.enableInverter = false;
   }
 
   // pedal difference 
-  int pedalDifference = carData.inputs.pedal0 - carData.inputs.pedal1;
+  int pedalDifference = tractiveCoreData.inputs.pedal0 - tractiveCoreData.inputs.pedal1;
   if (_abs(pedalDifference) > (PEDAL_MAX * 0.15)) {
-    carData.drivingData.commandedTorque = 0;
+    tractiveCoreData.tractive.commandedTorque = 0;
   }
   
   // buffer overflow / too much torque somehow
-  if ((carData.drivingData.commandedTorque > (MAX_TORQUE * 10)) || (carData.drivingData.commandedTorque < 0)) {
-    carData.drivingData.commandedTorque = 0;
+  if ((tractiveCoreData.tractive.commandedTorque > (MAX_TORQUE * 10)) || (tractiveCoreData.tractive.commandedTorque < 0)) {
+    tractiveCoreData.tractive.commandedTorque = 0;
   }
 
   // if brake is engaged
   // if (carData.outputs.brakeLight) {
-  //   carData.drivingData.commandedTorque = 0;
+  //   tractiveCoreData.tractive.commandedTorque = 0;
   // }
 
   // check if ready to drive
-  if (!carData.drivingData.readyToDrive) {
-    carData.drivingData.commandedTorque = 0;      // if not ready to drive then block all torque
+  if (!tractiveCoreData.tractive.readyToDrive) {
+    tractiveCoreData.tractive.commandedTorque = 0;      // if not ready to drive then block all torque
   }
 } 
 
@@ -861,7 +943,7 @@ uint16_t CalculateThrottleResponse(uint16_t value)
   }
 
   // determine response curve based on drive mode
-  switch (carData.drivingData.driveMode)
+  switch (tractiveCoreData.tractive.driveMode)
   {
     case SLOW:
       exponent = 4.0;
@@ -928,9 +1010,9 @@ void PrintTWAIDebug() {
   Serial.printf("\n");
 
   // incoming data
-  Serial.printf("Incoming RTD Status: %s\n", carData.drivingData.readyToDrive ? "true" : "false");
-  Serial.printf("Incoming IMD Fault Status: %s\n", carData.drivingData.imdFault ? "cleared" : "fault state");
-  Serial.printf("Incoming BMS Fault Status: %s\n", carData.drivingData.bmsFault ? "fault state" : "cleared");
+  Serial.printf("Incoming RTD Status: %s\n", tractiveCoreData.tractive.readyToDrive ? "true" : "false");
+  Serial.printf("Incoming IMD Fault Status: %s\n", tractiveCoreData.sensors.imdFault ? "cleared" : "fault state");
+  Serial.printf("Incoming BMS Fault Status: %s\n", tractiveCoreData.sensors.bmsFault ? "fault state" : "cleared");
 
   // sent status
   Serial.printf("Rine Ctrl Send Status: 0x%X\n", debugger.TWAI_rineCtrlResult);
@@ -961,34 +1043,34 @@ void PrintTWAIDebug() {
 void PrintIODebug() {
   Serial.printf("\n--- START I/O DEBUG ---\n");
 
-  // INPUTS
-  // pedal 0 & 1
-  Serial.printf("Pedal 0: %d\tPedal 1: %d\n", debugger.IO_data.inputs.pedal0, debugger.IO_data.inputs.pedal1);	
+  // // INPUTS
+  // // pedal 0 & 1
+  // Serial.printf("Pedal 0: %d\tPedal 1: %d\n", debugger.IO_data.inputs.pedal0, debugger.IO_data.inputs.pedal1);	
 
-  // brake 0 & 1
-  Serial.printf("Brake Front: %d\tBrake Rear: %d\n", debugger.IO_data.inputs.brakeFront, debugger.IO_data.inputs.brakeRear);
+  // // brake 0 & 1
+  // Serial.printf("Brake Front: %d\tBrake Rear: %d\n", debugger.IO_data.inputs.brakeFront, debugger.IO_data.inputs.brakeRear);
 
-  // brake regen
-  Serial.printf("Brake Regen: %d\n", debugger.IO_data.inputs.brakeRegen);
+  // // brake regen
+  // Serial.printf("Brake Regen: %d\n", debugger.IO_data.inputs.brakeRegen);
 
-  // coast regen
-  Serial.printf("Coast Regen: %d\n", debugger.IO_data.inputs.coastRegen);
+  // // coast regen
+  // Serial.printf("Coast Regen: %d\n", debugger.IO_data.inputs.coastRegen);
 
-  // faults
-  Serial.printf("Faults: IMD: %d | BMS: %d\n", carData.drivingData.imdFault, carData.drivingData.bmsFault);
+  // // faults
+  // Serial.printf("Faults: IMD: %d | BMS: %d\n", tractiveCoreData.tractive.imdFault, tractiveCoreData.tractive.bmsFault);
 
-  // rtd
-  Serial.printf("Ready to Drive: %s\n", carData.drivingData.readyToDrive ? "READY" : "DEACTIVATED");
+  // // rtd
+  // Serial.printf("Ready to Drive: %s\n", tractiveCoreData.tractive.readyToDrive ? "READY" : "DEACTIVATED");
 
-  // inverter
-  Serial.printf("Inverter Enable: %s\n", carData.drivingData.enableInverter ? "ENABLED" : "DISABLED");
+  // // inverter
+  // Serial.printf("Inverter Enable: %s\n", tractiveCoreData.tractive.enableInverter ? "ENABLED" : "DISABLED");
 
-  // OUTPUTS
-  Serial.printf("Buzzer Status: %s, Buzzer Counter: %d\n", debugger.IO_data.outputs.buzzerActive ? "On" : "Off", debugger.IO_data.outputs.buzzerCounter);
+  // // OUTPUTS
+  // Serial.printf("Buzzer Status: %s, Buzzer Counter: %d\n", debugger.IO_data.outputs.buzzerActive ? "On" : "Off", debugger.IO_data.outputs.buzzerCounter);
 
-  Serial.printf("Commanded Torque: %d\n", carData.drivingData.commandedTorque);
+  // Serial.printf("Commanded Torque: %d\n", tractiveCoreData.tractive.commandedTorque);
   
-  Serial.printf("Drive Mode: %d\n", (int)carData.drivingData.driveMode);
+  // Serial.printf("Drive Mode: %d\n", (int)tractiveCoreData.tractive.driveMode);
 
   Serial.printf("\n--- END I/O DEBUG ---\n");
 }

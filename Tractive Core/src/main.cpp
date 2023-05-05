@@ -51,7 +51,7 @@
 #define PRECHARGE_FLOOR                 0.8         // precentage of bus voltage rinehart should be at
 
 // TWAI
-#define NUM_TWAI_READS                   25          // the number of messages to read each time the CAN task is called
+#define NUM_TWAI_READS                  5           // the number of messages to read from RX FIFO the TWAI read task is called, 5 is max capacity of the queue!
 #define RINE_MOTOR_INFO_ADDR            0x0A5       // get motor information from Rinehart 
 #define RINE_VOLT_INFO_ADDR             0x0A7       // get rinehart electrical information
 #define RINE_BUS_INFO_ADDR              0x0AA       // get rinehart relay information 

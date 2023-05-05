@@ -94,19 +94,24 @@ Debugger debugger = {
   .IO_debugEnabled = false,
   .scheduler_debugEnable = true,
 
-  // debug data
+  // TWAI data
   .TWAI_rinehartCtrlResult = ESP_OK,
   .TWAI_prechargeCtrlResult = ESP_OK,
   .TWAI_rinehartCtrlMessage = {},
   .TWAI_prechargeCtrlMessage = {},
 
+  // I/O data
   .IO_data = {},
+
+  // precharge data
+  .prechargeState = PRECHARGE_OFF,
 
   // scheduler data
   .ioReadTaskCount = 0,
   .ioWriteTaskCount = 0,
   .twaiReadTaskCount = 0,
   .twaiWriteTaskCount = 0,
+  .prechargeTaskCount = 0,
 };
 
 
@@ -363,7 +368,7 @@ void setup() {
 
 
 /**
- * @brief callback function for creating a new sensor poll task
+ * @brief callback function for queueing I/O read and write tasks
  * 
  * @param args arguments to be passed to the task
  */
@@ -389,7 +394,7 @@ void IOUpdateCallback()
 
 
 /**
- * @brief callback function for creating a new CAN Update task
+ * @brief callback function for queueing TWAI read and write tasks
  * 
  * @param args arguments to be passed to the task
  */
@@ -415,7 +420,7 @@ void TWAIUpdateCallback()
 
 
 /**
- * @brief 
+ * @brief callback function to create a new Precharge task 
  * 
  */
 void PrechargeCallback() {
@@ -531,11 +536,11 @@ void IOReadTask(void* pvParameters)
     tractiveCoreData.outputs.fansEnable = false;
   }
 
-  // // debugging
-  // if (debugger.debugEnabled) {
-  //   debugger.IO_data = tractiveCoreData;
-  //   debugger.ioReadTaskCount++;
-  // }
+  // debugging
+  if (debugger.debugEnabled) {
+    debugger.IO_data = tractiveCoreData;
+    debugger.ioReadTaskCount++;
+  }
 
   // end task
   vTaskDelete(NULL);
@@ -597,7 +602,7 @@ void IOWriteTask(void* pvParameters)
   }
 
   // drive mode led
-  // implement this doing some rgb led stuff
+  // TODO: implement this doing some rgb led stuff
 
   // cooling led
   if (tractiveCoreData.outputs.fansEnable) {
@@ -615,11 +620,11 @@ void IOWriteTask(void* pvParameters)
     digitalWrite(RTD_LED_PIN, LOW);
   }
 
-  // // debugging
-  // if (debugger.debugEnabled) {
-  //   debugger.IO_data = carData;
-  //   debugger.ioWriteTaskCount++;
-  // }
+  // debugging
+  if (debugger.debugEnabled) {
+    debugger.IO_data = tractiveCoreData;
+    debugger.ioWriteTaskCount++;
+  }
 
   // end task
   vTaskDelete(NULL);
@@ -627,7 +632,7 @@ void IOWriteTask(void* pvParameters)
 
 
 /**
- * @brief reads and writes to the CAN bus
+ * @brief reads TWAI bus
  * 
  * @param pvParameters parameters passed to task
  */
@@ -696,7 +701,7 @@ void TWAIReadTask(void* pvParameters)
 
 
 /**
- * @brief writes to TWAI
+ * @brief writes to TWAI bus
  * 
  * @param pvParameters parameters passed to task
  */
@@ -891,11 +896,11 @@ void PrechargeTask(void* pvParameters) {
     break;
   }
 
-  // // debugging 
-  // if (debugger.debugEnabled) {
-  //   debugger.prechargeState = tractiveCoreData.tractive.prechargeState;
-  //   debugger.prechargeTaskCount++;
-  // }
+  // debugging 
+  if (debugger.debugEnabled) {
+    debugger.prechargeState = tractiveCoreData.tractive.prechargeState;
+    debugger.prechargeTaskCount++;
+  }
 
   // end task
   vTaskDelete(NULL);

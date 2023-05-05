@@ -121,25 +121,30 @@ typedef struct TractiveCoreData
  */
 typedef struct Debugger
 {
-  // debug toggle
-  bool debugEnabled;
-  bool TWAI_debugEnabled;
-  bool IO_debugEnabled;
-  bool scheduler_debugEnable;
+    // debug toggle
+    bool debugEnabled;
+    bool TWAI_debugEnabled;
+    bool IO_debugEnabled;
+    bool scheduler_debugEnable;
 
-  // debug data
-  esp_err_t TWAI_rinehartCtrlResult;
-  esp_err_t TWAI_prechargeCtrlResult;
-  uint8_t TWAI_rinehartCtrlMessage[8];
-  uint8_t TWAI_prechargeCtrlMessage[8];
+    // TWAI data
+    esp_err_t TWAI_rinehartCtrlResult;
+    esp_err_t TWAI_prechargeCtrlResult;
+    uint8_t TWAI_rinehartCtrlMessage[8];
+    uint8_t TWAI_prechargeCtrlMessage[8];
 
-  TractiveCoreData IO_data;
+    // I/O data
+    TractiveCoreData IO_data;
 
-  // scheduler data
-  int ioReadTaskCount;
-  int ioWriteTaskCount;
-  int twaiReadTaskCount;
-  int twaiWriteTaskCount;
+    // precharge data
+    PrechargeStates prechargeState;
+
+    // scheduler data
+    int ioReadTaskCount;
+    int ioWriteTaskCount;
+    int twaiReadTaskCount;
+    int twaiWriteTaskCount;
+    int prechargeTaskCount;
 } Debugger;
 
 

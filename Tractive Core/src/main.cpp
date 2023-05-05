@@ -121,7 +121,6 @@ TractiveCoreData tractiveCoreData = {
   // tractive data
   .tractive = {
     .readyToDrive = false,
-    .startStatus = false,
     .enableInverter = false,
 
     .prechargeState = PRECHARGE_OFF,
@@ -480,7 +479,8 @@ void IOReadTask(void* pvParameters)
   }
 
   // start button 
-  if ((digitalRead(START_BUTTON_PIN) == LOW) && tractiveCoreData.tractive.readyToDrive) {
+  if ((digitalRead(START_BUTTON_PIN) == LOW) && tractiveCoreData.tractive.readyToDrive && !tractiveCoreData.tractive.enableInverter) {
+    // only activate the buzzer is the inverter is not enabled, we don't need to repeat actions
     tractiveCoreData.outputs.buzzerEnable = true;
   }
 

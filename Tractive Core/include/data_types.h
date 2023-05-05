@@ -48,7 +48,6 @@ typedef struct TractiveCoreData
     struct Tractive 
     {
         bool readyToDrive;
-        bool startStatus;
         bool enableInverter;
 
         PrechargeStates prechargeState;

@@ -61,8 +61,8 @@
 #define BMS_CELL_DATA_ADDR              0x6B2       // cell data
 
 // tasks & timers
-#define IO_UPDATE_INTERVAL              50000       // 0.05 seconds in microseconds
-#define TWAI_UPDATE_INTERVAL            50000       // 0.05 seconds in microseconds
+#define IO_UPDATE_INTERVAL              100000      // 0.1 seconds in microseconds
+#define TWAI_UPDATE_INTERVAL            100000      // 0.1 seconds in microseconds
 #define PRECHARGE_UPDATE_INTERVAL       200000      // 0.2 seconds in microseconds
 #define TASK_STACK_SIZE                 4096        // in bytes
 #define TWAI_BLOCK_DELAY                100         // time to block to complete function call in FreeRTOS ticks (milliseconds)

@@ -128,13 +128,10 @@ typedef struct Debugger
   bool scheduler_debugEnable;
 
   // debug data
-  esp_err_t TWAI_rineCtrlResult;
-  esp_err_t TWAI_rcbCtrlResult;
-  uint8_t TWAI_rineCtrlOutgoingMessage[8];
-  uint8_t TWAI_rcbCtrlOutgoingMessage[8];
-
-  esp_err_t RCB_updateResult = ESP_OK;
-  TractiveCoreData RCB_updateMessage = {};
+  esp_err_t TWAI_rinehartCtrlResult;
+  esp_err_t TWAI_prechargeCtrlResult;
+  uint8_t TWAI_rinehartCtrlMessage[8];
+  uint8_t TWAI_prechargeCtrlMessage[8];
 
   TractiveCoreData IO_data;
 

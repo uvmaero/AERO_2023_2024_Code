@@ -95,13 +95,10 @@ Debugger debugger = {
   .scheduler_debugEnable = true,
 
   // debug data
-  .TWAI_rineCtrlResult = ESP_OK,
-  .TWAI_rcbCtrlResult = ESP_OK,
-  .TWAI_rineCtrlOutgoingMessage = {},
-  .TWAI_rcbCtrlOutgoingMessage = {},
-
-  .RCB_updateResult = ESP_OK,
-  .RCB_updateMessage = {},
+  .TWAI_rinehartCtrlResult = ESP_OK,
+  .TWAI_prechargeCtrlResult = ESP_OK,
+  .TWAI_rinehartCtrlMessage = {},
+  .TWAI_prechargeCtrlMessage = {},
 
   .IO_data = {},
 
@@ -725,43 +722,41 @@ void TWAIWriteTask(void* pvParameters)
   rinehartMessage.data[7] = (MAX_TORQUE * 10) >> 8;                               // rinehart expects 10x value spread across 2 bytes
 
   // queue message for transmission
-  esp_err_t rineCtrlResult = twai_transmit(&rinehartMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
+  esp_err_t rinehartCtrlResult = twai_transmit(&rinehartMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
 
 
   // --- precharge messages --- // 
-  twai_message_t prechargeMessage;
-  prechargeMessage.identifier = RINE_BUS_CONTROL_ADDR;
-  prechargeMessage.flags = TWAI_MSG_FLAG_NONE;
-  prechargeMessage.data_length_code = 8;
-
-  esp_err_t prechargeMessageResult;
+  twai_message_t prechargeCtrlMessage;
+  prechargeCtrlMessage.identifier = RINE_BUS_CONTROL_ADDR;
+  prechargeCtrlMessage.flags = TWAI_MSG_FLAG_NONE;
+  prechargeCtrlMessage.data_length_code = 8;
 
   // build rinehart message based on precharge state
   switch (tractiveCoreData.tractive.prechargeState) {
     case PRECHARGE_OFF:
       // message is sent to rinehart to turn everything off
-      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
-      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
-      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
-      prechargeMessage.data[3] = 0x00;          // N/A
-      prechargeMessage.data[4] = 0x00;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
-      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
-      prechargeMessage.data[6] = 0x00;          // N/A
-      prechargeMessage.data[7] = 0x00;          // N/A
+      prechargeCtrlMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeCtrlMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeCtrlMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeCtrlMessage.data[3] = 0x00;          // N/A
+      prechargeCtrlMessage.data[4] = 0x00;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeCtrlMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeCtrlMessage.data[6] = 0x00;          // N/A
+      prechargeCtrlMessage.data[7] = 0x00;          // N/A
     break;
 
     // do precharge
     case PRECHARGE_ON:
       // message is sent to rinehart to turn on precharge relay
       // precharge relay is on relay 1 in Rinehart
-      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
-      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
-      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
-      prechargeMessage.data[3] = 0x00;          // N/A
-      prechargeMessage.data[4] = 0x01;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
-      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
-      prechargeMessage.data[6] = 0x00;          // N/A
-      prechargeMessage.data[7] = 0x00;          // N/A
+      prechargeCtrlMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeCtrlMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeCtrlMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeCtrlMessage.data[3] = 0x00;          // N/A
+      prechargeCtrlMessage.data[4] = 0x01;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeCtrlMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeCtrlMessage.data[6] = 0x00;          // N/A
+      prechargeCtrlMessage.data[7] = 0x00;          // N/A
     break;
 
 
@@ -769,42 +764,49 @@ void TWAIWriteTask(void* pvParameters)
     case PRECHARGE_DONE:
       // message is sent to rinehart to turn everything on
       // Keep precharge relay on and turn on main contactor
-      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
-      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
-      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
-      prechargeMessage.data[3] = 0x00;          // N/A
-      prechargeMessage.data[4] = 0x03;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
-      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
-      prechargeMessage.data[6] = 0x00;          // N/A
-      prechargeMessage.data[7] = 0x00;          // N/A
+      prechargeCtrlMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeCtrlMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeCtrlMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeCtrlMessage.data[3] = 0x00;          // N/A
+      prechargeCtrlMessage.data[4] = 0x03;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeCtrlMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeCtrlMessage.data[6] = 0x00;          // N/A
+      prechargeCtrlMessage.data[7] = 0x00;          // N/A
     break;
 
 
     // error state
     case PRECHARGE_ERROR:
       // message is sent to rinehart to turn everything off
-      prechargeMessage.data[0] = 0x01;          // parameter address. LSB
-      prechargeMessage.data[1] = 0x00;          // parameter address. MSB
-      prechargeMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
-      prechargeMessage.data[3] = 0x00;          // N/A
-      prechargeMessage.data[4] = 0x00;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
-      prechargeMessage.data[5] = 0x55;          // 0x55 means external relay control
-      prechargeMessage.data[6] = 0x00;          // N/A
-      prechargeMessage.data[7] = 0x00;          // N/A
+      prechargeCtrlMessage.data[0] = 0x01;          // parameter address. LSB
+      prechargeCtrlMessage.data[1] = 0x00;          // parameter address. MSB
+      prechargeCtrlMessage.data[2] = 0x01;          // Read / Write Mode (0 = read | 1 = write)
+      prechargeCtrlMessage.data[3] = 0x00;          // N/A
+      prechargeCtrlMessage.data[4] = 0x00;          // Data: ( 0: all off | 1: relay 1 on | 2: relay 2 on | 3: relay 1 & 2 on )
+      prechargeCtrlMessage.data[5] = 0x55;          // 0x55 means external relay control
+      prechargeCtrlMessage.data[6] = 0x00;          // N/A
+      prechargeCtrlMessage.data[7] = 0x00;          // N/A
     break;
   }
 
   // queue rinehart message for transmission
-  prechargeMessageResult = twai_transmit(&prechargeMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
+  esp_err_t prechargeCtrlMessageResult = twai_transmit(&prechargeCtrlMessage, pdMS_TO_TICKS(TWAI_BLOCK_DELAY));
 
   // debugging
   if (debugger.debugEnabled) {
-    debugger.TWAI_rineCtrlResult = rineCtrlResult;
-
+    debugger.TWAI_rinehartCtrlResult = rinehartCtrlResult;
+    // copy message
     for (int i = 0; i < 8; ++i) {
-      debugger.TWAI_rineCtrlOutgoingMessage[i] = rinehartMessage.data[i];
+      debugger.TWAI_rinehartCtrlMessage[i] = rinehartMessage.data[i];
     }
 
+    debugger.TWAI_prechargeCtrlResult = prechargeCtrlMessageResult;
+    // copy message 
+    for (int i = 0; i < 8; ++i) {
+      debugger.TWAI_prechargeCtrlMessage[i] = prechargeCtrlMessage.data[i];
+    }
+
+    // scheduler counter update
     debugger.twaiWriteTaskCount++;
   }
 
@@ -1075,27 +1077,27 @@ void PrintTWAIDebug() {
 
   Serial.printf("\n");
 
-  // incoming data
-  Serial.printf("Incoming RTD Status: %s\n", tractiveCoreData.tractive.readyToDrive ? "true" : "false");
-  Serial.printf("Incoming IMD Fault Status: %s\n", tractiveCoreData.sensors.imdFault ? "cleared" : "fault state");
-  Serial.printf("Incoming BMS Fault Status: %s\n", tractiveCoreData.sensors.bmsFault ? "fault state" : "cleared");
+  // --- incoming messages --- // 
+
+
+  // --- outgoing messages --- // 
 
   // sent status
-  Serial.printf("Rine Ctrl Send Status: 0x%X\n", debugger.TWAI_rineCtrlResult);
-  Serial.printf("RCB Ctrl Send Status: 0x%X\n", debugger.TWAI_rcbCtrlResult);
+  Serial.printf("Rine Ctrl Send Status: 0x%X\n", debugger.TWAI_rinehartCtrlResult);
+  Serial.printf("Precharge Ctrl Send Status: 0x%X\n", debugger.TWAI_prechargeCtrlResult);
 
   // messages
   Serial.printf("\n");
-  Serial.printf("Rine Ctrl Outgoing Message:\n");
+  Serial.printf("Rinehart Ctrl Outgoing Message:\n");
   for (int i = 0; i < 8; ++i) {
-    Serial.printf("Byte %d: %02X\t", i, debugger.TWAI_rineCtrlOutgoingMessage[i]);
+    Serial.printf("Byte %d: %02X\t", i, debugger.TWAI_rinehartCtrlMessage[i]);
   }
 
   Serial.printf("\n");
 
-  Serial.printf("RCB Ctrl Outgoing Message:\n");
+  Serial.printf("Precharge Ctrl Outgoing Message:\n");
   for (int i = 0; i < 8; ++i) {
-    Serial.printf("Byte %d: %02X\t", i, debugger.TWAI_rcbCtrlOutgoingMessage[i]);
+    Serial.printf("Byte %d: %02X\t", i, debugger.TWAI_prechargeCtrlMessage[i]);
   }
 
   Serial.printf("\n\n--- END TWAI DEBUG ---\n");

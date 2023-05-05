@@ -129,7 +129,7 @@ TractiveCoreData tractiveCoreData = {
     .rinehartVoltage = 0.0f,
     .commandedTorque = 0,
 
-    .driveDirection = false,
+    .driveDirection = false,    // forward is false | reverse is true (we run backwards)
     .driveMode = ECO,
     
     .currentSpeed = 0.0f,
@@ -240,7 +240,7 @@ void setup() {
     vTaskDelay(3000);
   }
 
-  // -------------------------- initialize serial connection ------------------------ //
+  // ----------------------- initialize serial connection --------------------- //
   Serial.begin(9600);
   Serial.printf("\n\n|--- STARTING SETUP ---|\n\n");
 
@@ -437,6 +437,7 @@ void PrechargeCallback() {
   return;
 }
 
+
 /*
 ===============================================================================================
                                 FreeRTOS Task Functions
@@ -468,7 +469,7 @@ void IOReadTask(void* pvParameters)
   tractiveCoreData.inputs.frontBrake = map(tmpFrontBrake, 265, 855, PEDAL_MIN, PEDAL_MAX);  // (0.26V - 0.855V) | values found via testing
 
   float tmpRearBrake = analogReadMilliVolts(REAR_BRAKE_PIN);
-  tractiveCoreData.inputs.rearBrake = map(tmpRearBrake, 265, 855, PEDAL_MIN, PEDAL_MAX);  // (0.26V - 0.855V) | values found via testing
+  tractiveCoreData.inputs.rearBrake = map(tmpRearBrake, 265, 855, PEDAL_MIN, PEDAL_MAX);    // (0.26V - 0.855V) | values found via testing
 
   uint16_t brakeAverage = (tractiveCoreData.inputs.frontBrake + tractiveCoreData.inputs.rearBrake) / 2;
   if (brakeAverage >= BRAKE_LIGHT_THRESHOLD) {
@@ -479,7 +480,7 @@ void IOReadTask(void* pvParameters)
   }
 
   // start button 
-  if (digitalRead(START_BUTTON_PIN) == LOW && tractiveCoreData.tractive.readyToDrive) {
+  if ((digitalRead(START_BUTTON_PIN) == LOW) && tractiveCoreData.tractive.readyToDrive) {
     tractiveCoreData.outputs.buzzerEnable = true;
   }
 
@@ -521,10 +522,10 @@ void IOReadTask(void* pvParameters)
 
   // cooling 
   int tmpCoolingIn = analogReadMilliVolts(COOLING_IN_TEMP_PIN);
-  tractiveCoreData.sensors.coolingTempIn = map(tmpCoolingIn, 0, 2500, 0, 100);
+  tractiveCoreData.sensors.coolingTempIn = map(tmpCoolingIn, 0, 2500, 0, 100);      // find thermistor values via testing 
 
   int tmpCoolingOut = analogReadMilliVolts(COOLING_OUT_TEMP_PIN);
-  tractiveCoreData.sensors.coolingTempOut = map(tmpCoolingOut, 0, 2500, 0, 100);
+  tractiveCoreData.sensors.coolingTempOut = map(tmpCoolingOut, 0, 2500, 0, 100);    // find thermistor values via testing 
 
   if (tractiveCoreData.sensors.coolingTempIn >= COOLING_ENABLE_THRESHOLD) {
     tractiveCoreData.outputs.fansEnable = true;
